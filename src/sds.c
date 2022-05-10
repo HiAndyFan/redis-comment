@@ -57,15 +57,18 @@ static inline int sdsHdrSize(char type) {
     return 0;
 }
 
+
+// 输入一个字符串长度, 返回合适的长度的SDS类型
 static inline char sdsReqType(size_t string_size) {
-    if (string_size < 1<<5)
+    if (string_size < 1<<5) //size < 32
         return SDS_TYPE_5;
-    if (string_size < 1<<8)
+    if (string_size < 1<<8) //size < 256
         return SDS_TYPE_8;
-    if (string_size < 1<<16)
+    if (string_size < 1<<16) //size < 65536
         return SDS_TYPE_16;
+    //32位和64位操作系统允许使用的最大类型不同
 #if (LONG_MAX == LLONG_MAX)
-    if (string_size < 1ll<<32)
+    if (string_size < 1ll<<32) //size < 2^32
         return SDS_TYPE_32;
     return SDS_TYPE_64;
 #else
@@ -106,12 +109,13 @@ sds _sdsnewlen(const void *init, size_t initlen, int trymalloc) {
     char type = sdsReqType(initlen);
     /* Empty strings are usually created in order to append. Use type 8
      * since type 5 is not good at this. */
+    // 如果初始长度为0, 那么为其分配256字节长的类型, 以预留充足的空间扩充字符串.
     if (type == SDS_TYPE_5 && initlen == 0) type = SDS_TYPE_8;
-    int hdrlen = sdsHdrSize(type);
+    int hdrlen = sdsHdrSize(type); //保存对应类型sds的handler长度
     unsigned char *fp; /* flags pointer. */
     size_t usable;
 
-    assert(initlen + hdrlen + 1 > initlen); /* Catch size_t overflow */
+    assert(initlen + hdrlen + 1 > initlen); // 识别size_t类型溢出的异常情况
     sh = trymalloc?
         s_trymalloc_usable(hdrlen+initlen+1, &usable) :
         s_malloc_usable(hdrlen+initlen+1, &usable);
@@ -120,39 +124,49 @@ sds _sdsnewlen(const void *init, size_t initlen, int trymalloc) {
         init = NULL;
     else if (!init)
         memset(sh, 0, hdrlen+initlen+1);
+
+    // 实际储存字符串的起始内存地址s是由分配的内存地址+handler占用的地址计算出来的, 实际上sds
+    // 对象储存的地址也是从这里开始的. 也就是说当需要获取sds的属性信息的时候是需要通过这个地址
+    // 反向计算得到的. 这么处理的好处是sds可以兼容原生C中的字符串处理函数. 坏处是对调用者的要求
+    // 很高, 使用者头脑不清醒的时候很可能会把普通的C字符串当做sds传参给sds的处理函数. 各种sds
+    // 函数也不会对输入地址做任何合法性校验, 那么错误的调用就会导致内存越界等问题. 在公司的业务
+    // 代码里不太可能允许你写这种实现. redis的做法是在让整个项目里上层的代码都统一使用了sds存储
+    // 字符串, 消灭了原生字符串自然也就不存在误调用的问题了.
     s = (char*)sh+hdrlen;
     fp = ((unsigned char*)s)-1;
-    usable = usable-hdrlen-1;
+    usable = usable-hdrlen-1; // sds中预分配的空余空间.
     if (usable > sdsTypeMaxSize(type))
         usable = sdsTypeMaxSize(type);
     switch(type) {
         case SDS_TYPE_5: {
+            // 32字符长的sds会压缩储存type和len
+            // lllll|ttt, 低3位用于储存type, 其余位用于储存len(恰好最大记录值为31)
             *fp = type | (initlen << SDS_TYPE_BITS);
             break;
         }
         case SDS_TYPE_8: {
-            SDS_HDR_VAR(8,s);
+            SDS_HDR_VAR(8,s); //struct sdshdr8 *sh = (void*)((s)-(sizeof(struct sdshdr8)))
             sh->len = initlen;
             sh->alloc = usable;
             *fp = type;
             break;
         }
         case SDS_TYPE_16: {
-            SDS_HDR_VAR(16,s);
+            SDS_HDR_VAR(16,s); //struct sdshdr16 *sh = (void*)((s)-(sizeof(struct sdshdr16)))
             sh->len = initlen;
             sh->alloc = usable;
             *fp = type;
             break;
         }
         case SDS_TYPE_32: {
-            SDS_HDR_VAR(32,s);
+            SDS_HDR_VAR(32,s); //struct sdshdr32 *sh = (void*)((s)-(sizeof(struct sdshdr32)))
             sh->len = initlen;
             sh->alloc = usable;
             *fp = type;
             break;
         }
         case SDS_TYPE_64: {
-            SDS_HDR_VAR(64,s);
+            SDS_HDR_VAR(64,s); //struct sdshdr64 *sh = (void*)((s)-(sizeof(struct sdshdr64)))
             sh->len = initlen;
             sh->alloc = usable;
             *fp = type;
