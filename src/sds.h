@@ -40,6 +40,7 @@ extern const char *SDS_NOINIT;
 #include <stdarg.h>
 #include <stdint.h>
 
+// sds实际上就是char类型指针的别名, typedef (char*) sds;
 typedef char *sds;
 
 /* Note: sdshdr5 is never used, we just access the flags byte directly.
@@ -86,17 +87,17 @@ struct __attribute__ ((__packed__)) sdshdr64 {
 
 static inline size_t sdslen(const sds s) {
     unsigned char flags = s[-1];
-    switch(flags&SDS_TYPE_MASK) {
+    switch(flags&SDS_TYPE_MASK) { //取flags的低3位
         case SDS_TYPE_5:
-            return SDS_TYPE_5_LEN(flags);
+            return SDS_TYPE_5_LEN(flags); //如果是TYPE_5, flags的高5位里储存的就是长度
         case SDS_TYPE_8:
-            return SDS_HDR(8,s)->len;
+            return SDS_HDR(8,s)->len; // ((struct sdshdr8 *)((s)-(sizeof(struct sdshdr8))))->len
         case SDS_TYPE_16:
-            return SDS_HDR(16,s)->len;
+            return SDS_HDR(16,s)->len; // 同上, 从s的地址逆向计算出handler的地址, 再访问len得到字符长度.
         case SDS_TYPE_32:
-            return SDS_HDR(32,s)->len;
+            return SDS_HDR(32,s)->len; // 同上, sdshdr32
         case SDS_TYPE_64:
-            return SDS_HDR(64,s)->len;
+            return SDS_HDR(64,s)->len;// 同上, sdshdr64
     }
     return 0;
 }
